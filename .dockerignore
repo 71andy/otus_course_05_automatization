@@ -1,0 +1,8 @@
+.venv
+.git
+.vscode
+Makefile
+*.tar
+**/Dockerfile
+**/__pycache__
+**/*.ipynb
