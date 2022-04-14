@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime
 import string
 from optparse import OptionParser
+from multiprocessing import Process
 
 
 def is_hex(s):
@@ -25,7 +26,7 @@ class HttpServerProtocol(asyncio.Protocol):
     }
 
     def __init__(self, rootdir=".", name="_"):
-        super().__init__
+        super().__init__()
         self._header = {}
         self._req_type = None
         self._directory = "/"
@@ -135,24 +136,23 @@ class HttpServerProtocol(asyncio.Protocol):
         return ctype if ctype is not None else "Unknown"
 
 
-def main(opts):
+def worker_func(opts, name):
 
     loop = asyncio.get_event_loop()
     servers = []
-    for i in range(opts.workers):
-        print(f"Starting server {i+1}")
-        coro = loop.create_server(lambda: HttpServerProtocol(opts.root, str(i + 1)), "127.0.0.1", opts.port, reuse_port=True)
-        server = loop.run_until_complete(coro)
-        servers.append(server)
+    coro = loop.create_server(lambda: HttpServerProtocol(opts.root, name), "127.0.0.1", opts.port, reuse_port=True)
+    server = loop.run_until_complete(coro)
+    servers.append(server)
+
+    print(f"Starting: {name}")
 
     try:
-        print("Running... Press ^C to shutdown")
         loop.run_forever()
     except KeyboardInterrupt:
         pass
 
     for i, server in enumerate(servers):
-        print("Closing server {0}".format(i + 1))
+        print(f"Closing: {name}")
         server.close()
         loop.run_until_complete(server.wait_closed())
     loop.close()
@@ -164,4 +164,16 @@ if __name__ == "__main__":
     op.add_option("-p", "--port", action="store", dest="port", type=int, default=8080)
     op.add_option("-r", "--root", action="store", type=str, default=".")
     (opts, args) = op.parse_args()
-    main(opts)
+
+    workers = []
+    for i in range(opts.workers):
+        worker = Process(target=worker_func, args=(opts, "server " + str(i + 1)), daemon=True)
+        worker.start()
+        workers.append(worker)
+
+    try:
+        print("Running... Press ^C to shutdown")
+        for w in workers:
+            w.join()
+    except KeyboardInterrupt:
+        print("Exit...")
