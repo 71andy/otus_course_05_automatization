@@ -9,74 +9,71 @@ from urllib.parse import urlparse, unquote
 import mimetypes
 
 
-def is_hex(s):
-    hex_digits = set(string.hexdigits)
-    return all(c in hex_digits for c in s)
-
-
-class HttpServerProtocol(asyncio.Protocol):
-    def __init__(self, rootdir=".", name="_"):
-        super().__init__()
+class RequestAnalizer:
+    def __init__(self, data):
+        self._path = None
+        self._valid = False
         self._header = {}
         self._req_type = None
-        self._directory = "/"
-        self._name = name
-        self._rootdir = rootdir
+        self._request = data.decode()
+        self._parse_request()
+
+    def is_valid(self):
+        return self._valid
 
     @property
-    def directory(self):
-        return self._directory
+    def path(self):
+        return self._path
 
-    @directory.setter
-    def directory(self, dir):
+    @path.setter
+    def path(self, dir):
         r = urlparse(unquote(dir)).path
-
         if r.endswith("/"):
             r += "index.html"
+        self._path = r
 
-        self._directory = r
-
-    def connection_made(self, transport):
-        """Хук на установление соединения"""
-        # peername = transport.get_extra_info("peername")
-        # print("Connection from {}".format(peername))
-        self.transport = transport
-        self.data = b""
-
-    def data_received(self, data):
-        """Хук на примем данных по соединение. Обработка входящего запроса"""
+    def _parse_request(self):
         regexp = r"^(GET|HEAD|POST|PUT|DELETE) .* HTTP/1.[01].*\r\n\r\n"
-        if re.search(regexp, data.decode(), flags=re.DOTALL) is not None:
-            self.parse_request(data)
-            # print(f"server={self._name} data={data}")
-            response = self.get_response()
-            self.transport.write(response)
+        if re.search(regexp, self._request, flags=re.DOTALL) is None:
+            self._valid = False
+            return
 
-        # Close the client socket
-        self.transport.close()
-
-    def parse_request(self, data):
-        headers = data.decode().split("\r\n")
+        self._valid = True
+        headers = self._request.split("\r\n")
         # Из первой строки получить тип запроса и путь к файлу
         req_line = headers[0].split()
-        try:
-            self._req_type = req_line[0]
-        except IndexError:
-            print("data=", data)
-            print("self.data=", self.data)
-            # raise IndexError
-        self.directory = req_line[1]
+        self._req_type = req_line[0]
+        self.path = req_line[1]
         # Сгенерить словарь с полями заголовка запроса
-        self._header.clear()
         for i in range(1, len(headers) - 1):
             s = headers[i]
             hdr = [x.strip() for x in s.split(":")]
             if len(hdr) == 2:
                 self._header[hdr[0]] = hdr[1]
 
-    def get_response(self):
-        code, content = self.get_content()
-        mt = mimetypes.guess_type(self.directory)[0]
+    def _get_content(self, rootdir):
+
+        if self._req_type != "GET" and self._req_type != "HEAD":
+            return 405, 0, b"Method Not Allowed"
+
+        filename = rootdir + self.path
+
+        if not os.path.abspath(filename).startswith(os.path.abspath(rootdir)):
+            return 403, 0, b"Forbidden"
+
+        if not os.path.isfile(filename):
+            return 404, 0, b"File not found"
+
+        fsize = os.path.getsize(filename)
+        if self._req_type == "HEAD":
+            return 200, fsize, b""
+
+        with open(filename, "rb") as file:
+            return 200, fsize, file.read()
+
+    def get_response(self, rootdir):
+        code, content_size, content = self._get_content(rootdir)
+        mt = mimetypes.guess_type(self.path)[0]
         r = ""
         if code == 200:
             r += "HTTP/1.1 200 OK\r\n"
@@ -87,29 +84,32 @@ class HttpServerProtocol(asyncio.Protocol):
         else:
             r += "HTTP/1.1 405 Method Not Allowed\r\n"
         r += "Server: Otus course http server\r\n"
-        r += "Date: " + datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT") + "\r\n"
-        r += "Content-Length: " + str(len(content)) + "\r\n"
+        r += f"Date: { datetime.utcnow().strftime('%a, %d %b %Y %H:%M:%S GMT') }\r\n"
+        r += f"Content-Length: {str(content_size)}\r\n"
         if mt:
-            r += "Content-Type: " + mimetypes.guess_type(self.directory)[0] + "\r\n"
+            r += f"Content-Type: {mt}\r\n"
         r += "Connection: close\r\n"
         r += "\r\n"
-        return r.encode("utf-8") + (b"" if self._req_type == "HEAD" else content)
+        return r.encode("utf-8") + content
 
-    def get_content(self):
 
-        if self._req_type != "GET" and self._req_type != "HEAD":
-            return 405, b"Method Not Allowed"
+class HttpServerProtocol(asyncio.Protocol):
+    def __init__(self, rootdir=".", name="_"):
+        super().__init__()
+        self._name = name
+        self._rootdir = rootdir
 
-        filename = self._rootdir + self.directory
+    def connection_made(self, transport):
+        """Хук на установление соединения"""
+        self.transport = transport
 
-        if not os.path.abspath(filename).startswith(os.path.abspath(self._rootdir)):
-            return 403, b"Forbidden"
+    def data_received(self, data):
+        """Хук на прием данных по соединению. Обработка входящего запроса"""
+        ra = RequestAnalizer(data)
+        if ra.is_valid():
+            self.transport.write(ra.get_response(self._rootdir))
 
-        if not os.path.isfile(filename):
-            return 404, b"File not found"
-
-        with open(filename, "rb") as file:
-            return 200, file.read()
+        self.transport.close()  # Close the client socket
 
 
 def worker_func(opts, name):
