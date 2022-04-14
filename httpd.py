@@ -5,6 +5,7 @@ from datetime import datetime
 import string
 from optparse import OptionParser
 from multiprocessing import Process
+from urllib.parse import urlparse, unquote
 import mimetypes
 
 
@@ -28,18 +29,7 @@ class HttpServerProtocol(asyncio.Protocol):
 
     @directory.setter
     def directory(self, dir):
-        r = ""
-        i = 0
-        while i < len(dir):
-            c = dir[i]
-            if c == "%" and i + 2 < len(dir) and is_hex(dir[i + 1 : i + 3]):
-                r += chr(int(dir[i + 1 : i + 3], 16))
-                i += 2
-            elif c == "?":
-                break
-            else:
-                r += c
-            i += 1
+        r = urlparse(unquote(dir)).path
 
         if r.endswith("/"):
             r += "index.html"
