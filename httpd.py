@@ -5,6 +5,7 @@ from datetime import datetime
 import string
 from optparse import OptionParser
 from multiprocessing import Process
+import mimetypes
 
 
 def is_hex(s):
@@ -13,18 +14,6 @@ def is_hex(s):
 
 
 class HttpServerProtocol(asyncio.Protocol):
-
-    content_types = {
-        "html": "text/html",
-        "css": "text/css",
-        "js": "text/javascript",
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "png": "image/png",
-        "gif": "image/gif",
-        "swf": "application/x-shockwave-flash",
-    }
-
     def __init__(self, rootdir=".", name="_"):
         super().__init__()
         self._header = {}
@@ -97,6 +86,7 @@ class HttpServerProtocol(asyncio.Protocol):
 
     def get_response(self):
         code, content = self.get_content()
+        mt = mimetypes.guess_type(self.directory)[0]
         r = ""
         if code == 200:
             r += "HTTP/1.1 200 OK\r\n"
@@ -109,7 +99,8 @@ class HttpServerProtocol(asyncio.Protocol):
         r += "Server: Otus course http server\r\n"
         r += "Date: " + datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT") + "\r\n"
         r += "Content-Length: " + str(len(content)) + "\r\n"
-        r += "Content-Type: " + self.get_content_type() + "\r\n"
+        if mt:
+            r += "Content-Type: " + mimetypes.guess_type(self.directory)[0] + "\r\n"
         r += "Connection: close\r\n"
         r += "\r\n"
         return r.encode("utf-8") + (b"" if self._req_type == "HEAD" else content)
@@ -129,11 +120,6 @@ class HttpServerProtocol(asyncio.Protocol):
 
         with open(filename, "rb") as file:
             return 200, file.read()
-
-    def get_content_type(self):
-        _, ext = os.path.splitext(self.directory)
-        ctype = self.content_types.get(ext.replace(".", ""))
-        return ctype if ctype is not None else "Unknown"
 
 
 def worker_func(opts, name):
