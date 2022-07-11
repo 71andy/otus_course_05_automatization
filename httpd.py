@@ -5,11 +5,12 @@ from datetime import datetime
 import string
 from optparse import OptionParser
 from multiprocessing import Process
+from urllib import response
 from urllib.parse import urlparse, unquote
 import mimetypes
 
 
-class RequestAnalizer:
+class Request:
     def __init__(self, data):
         self._path = None
         self._valid = False
@@ -20,6 +21,10 @@ class RequestAnalizer:
 
     def is_valid(self):
         return self._valid
+
+    @property
+    def type(self):
+        return self._req_type
 
     @property
     def path(self):
@@ -51,29 +56,36 @@ class RequestAnalizer:
             if len(hdr) == 2:
                 self._header[hdr[0]] = hdr[1]
 
-    def _get_content(self, rootdir):
 
-        if self._req_type != "GET" and self._req_type != "HEAD":
+class Responser:
+    def __init__(self, request: Request, rootdir: str):
+        self.request = request
+        self.rootdir = rootdir
+
+    def _get_content(self):
+
+        req_type = self.request.type
+        if req_type != "GET" and req_type != "HEAD":
             return 405, 0, b"Method Not Allowed"
 
-        filename = rootdir + self.path
+        filename = self.rootdir + self.request.path
 
-        if not os.path.abspath(filename).startswith(os.path.abspath(rootdir)):
+        if not os.path.abspath(filename).startswith(os.path.abspath(self.rootdir)):
             return 403, 0, b"Forbidden"
 
         if not os.path.isfile(filename):
             return 404, 0, b"File not found"
 
         fsize = os.path.getsize(filename)
-        if self._req_type == "HEAD":
+        if req_type == "HEAD":
             return 200, fsize, b""
 
         with open(filename, "rb") as file:
             return 200, fsize, file.read()
 
-    def get_response(self, rootdir):
-        code, content_size, content = self._get_content(rootdir)
-        mt = mimetypes.guess_type(self.path)[0]
+    def get_response(self):
+        code, content_size, content = self._get_content()
+        mt = mimetypes.guess_type(self.request.path)[0]
         r = ""
         if code == 200:
             r += "HTTP/1.1 200 OK\r\n"
@@ -105,9 +117,10 @@ class HttpServerProtocol(asyncio.Protocol):
 
     def data_received(self, data):
         """Хук на прием данных по соединению. Обработка входящего запроса"""
-        ra = RequestAnalizer(data)
-        if ra.is_valid():
-            self.transport.write(ra.get_response(self._rootdir))
+        request = Request(data)
+        if request.is_valid():
+            responser = Responser(request, self._rootdir)
+            self.transport.write(responser.get_response())
 
         self.transport.close()  # Close the client socket
 
