@@ -12,4 +12,4 @@ WORKDIR /app
 # Copy the current directory contents into the container at /app
 ADD . /app
 
-CMD ["python3", "httpd.py", "-w", "10", "-r", "."]
+CMD ["python3", "httpd.py", "-w", "10", "-r", "./httptest"]
